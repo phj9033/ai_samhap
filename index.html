@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes, viewport-fit=cover">
+    <title>용사 사절</title>
+    <!-- 이 템플릿은 TemplateData/ 를 내보내지 않는다 — favicon 링크를 두면 매 로드마다 404 가 찍힌다. -->
+    <style>
+      /* 세로 게임을 뷰포트에 꽉 채운다. 스톡 템플릿은 캔버스를 960x600 으로 고정해
+         세로 UI 가 가운데 띠로 눌리고 좌우가 검게 남는다 — 심사자가 처음 보는 화면이 그것이다. */
+      html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #14100A; }
+      body { display: flex; align-items: center; justify-content: center; }
+      #unity-container { position: fixed; inset: 0; }
+      #unity-canvas { width: 100%; height: 100%; display: block; background: #14100A; touch-action: none; }
+      #unity-loading-bar {
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        display: none; text-align: center; font-family: system-ui, -apple-system, sans-serif;
+      }
+      #unity-loading-title { color: #F2C24E; font-size: 15px; letter-spacing: 0.08em; margin-bottom: 14px; }
+      #unity-progress-bar-empty { width: 220px; height: 10px; background: #2A2114; border: 1px solid #6B5730; border-radius: 5px; overflow: hidden; }
+      #unity-progress-bar-full { width: 0%; height: 100%; background: #F2C24E; transition: width 0.2s linear; }
+      #unity-loading-note { color: #8C7A55; font-size: 11px; margin-top: 10px; }
+      #unity-warning { position: absolute; left: 50%; top: 20px; transform: translateX(-50%); z-index: 10; }
+    </style>
+  </head>
+  <body>
+    <div id="unity-container">
+      <canvas id="unity-canvas" tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-loading-title">용사 사절</div>
+        <div id="unity-progress-bar-empty"><div id="unity-progress-bar-full"></div></div>
+        <div id="unity-loading-note">굴을 여는 중…</div>
+      </div>
+      <div id="unity-warning"> </div>
+    </div>
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+
+      function unityShowBanner(msg, type) {
+        var warningBanner = document.querySelector("#unity-warning");
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; color: #fff; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function () { warningBanner.removeChild(div); updateBannerVisibility(); }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/WebGL.loader.js";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/WebGL.data.unityweb",
+        frameworkUrl: buildUrl + "/WebGL.framework.js.unityweb",
+        codeUrl: buildUrl + "/WebGL.wasm.unityweb",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "HwijungPark",
+        productName: "용사 사절",
+        productVersion: "1.0",
+        showBanner: unityShowBanner,
+      };
+
+      // 캔버스 백버퍼를 CSS 크기 × DPR 로 맞춘다. 고정하지 않으면 레티나에서 흐리고,
+      // DPR 을 그대로 두면 모바일에서 픽셀이 4배가 되어 프레임이 깎인다 — 2 로 캡한다.
+      config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+
+      // ── 리셋 링크 ────────────────────────────────────────────────────────────
+      // 배포본을 받은 테스터에게 "초기화 링크"를 줄 수 있게 한다. 모바일 사파리엔 DevTools 가
+      // 없어서, 이 게이트가 없으면 기기에서 세이브를 지울 방법이 사실상 없다.
+      //
+      //   ?reset=1     세이브만 지운다(재다운로드 없음).
+      //   ?reset=all   세이브 + 빌드 데이터 캐시. 캐시에서 옛 빌드가 돌 때만 쓴다 —
+      //                다음 로드가 콜드가 되어 수십 MB 를 다시 받는다.
+      //
+      // WebGL 의 PlayerPrefs 는 localStorage 가 아니라 IndexedDB(IDBFS) 에 있다. Unity 6 은
+      // 해시 없이 `/idbfs` 를 그대로 마운트하므로(framework.js 의 `FS.mount(IDBFS,...,"/idbfs")`)
+      // DB 이름이 상수다 — `indexedDB.databases()` 로 열거할 필요가 없고, 그게 없는 Firefox 에서도
+      // 똑같이 동작한다. 이 한 DB 가 PlayerPrefs 와 persistentDataPath 를 함께 담으므로
+      // 오프라인 분석 큐도 같이 비워진다(버려진 회차의 잔여 이벤트라 지우는 게 맞다).
+      //
+      // ‼ 반드시 createUnityInstance <b>전에</b> 끝내야 한다. Unity 가 마운트한 뒤에 지우면
+      //   메모리에 올라간 세이브가 첫 저장에서 그대로 다시 기록된다.
+      var IDBFS_DB = "/idbfs";        // PlayerPrefs + persistentDataPath
+      var UNITY_CACHE_DB = "UnityCache"; // 빌드 데이터(.unityweb) 캐시
+      var resetMode = new URLSearchParams(location.search).get("reset");
+
+      function deleteDatabase(name) {
+        // 리셋 실패보다 부팅 실패가 나쁘다 — onblocked/예외/무응답이어도 3초 뒤 그냥 진행한다.
+        return new Promise((resolve) => {
+          var settled = false;
+          var finish = () => { if (!settled) { settled = true; resolve(); } };
+          setTimeout(finish, 3000);
+          try {
+            var req = indexedDB.deleteDatabase(name);
+            req.onsuccess = req.onerror = req.onblocked = finish;
+          } catch (e) {
+            finish(); // 시크릿 모드 등에서 indexedDB 자체가 막힌 경우
+          }
+        });
+      }
+
+      function runResetGate() {
+        if (!resetMode) return Promise.resolve();
+        var names = [IDBFS_DB];
+        if (resetMode === "all") names.push(UNITY_CACHE_DB);
+        var note = document.querySelector("#unity-loading-note");
+        note.textContent = "저장 데이터를 지우는 중…";
+        return Promise.all(names.map(deleteDatabase)).then(() => {
+          // 쿼리를 URL 에서 떼어낸다. 남겨두면 테스터가 새로고침할 때마다 진행이 날아간다.
+          history.replaceState(null, "", location.pathname + location.hash);
+          note.textContent = "굴을 여는 중…";
+        });
+      }
+
+      document.querySelector("#unity-loading-bar").style.display = "block";
+
+      runResetGate().then(() => {
+        var script = document.createElement("script");
+        script.src = loaderUrl;
+        script.onload = () => {
+          createUnityInstance(canvas, config, (progress) => {
+            document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
+          }).then((unityInstance) => {
+            document.querySelector("#unity-loading-bar").style.display = "none";
+            window.unityInstance = unityInstance;
+          }).catch((message) => {
+            unityShowBanner(message, 'error');
+          });
+        };
+        document.body.appendChild(script);
+      });
+    </script>
+  </body>
+</html>
